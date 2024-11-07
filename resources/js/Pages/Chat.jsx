@@ -1,6 +1,8 @@
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
 import { Head, useForm } from "@inertiajs/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+// Import echo.js to initialize Echo instance
+import Echo from "laravel-echo";
 
 export default function Chat({ user, auth, msg }) {
     const { data, setData, post, reset } = useForm({
@@ -9,13 +11,39 @@ export default function Chat({ user, auth, msg }) {
         receiver_id: user.id
     });
 
+    const [messages, setMessages] = useState(msg);
+    
+    useEffect(() => {
+        // Listen for new messages on the private channel
+        const channel = window.Echo.private(`chat-channel.${auth.user.id}`)
+            .listen('MessageSentEvent', (event) => {
+                setMessages((prevMessages) => [...prevMessages, event.message]);
+            });
+
+        // Cleanup on unmount
+        return () => {
+            channel.stopListening('MessageSentEvent');
+        };
+    }, [auth.user.id]);
+
     const handleSendMessage = (e) => {
         e.preventDefault();
 
         if (data.message.trim() !== "") {
+            // Add the message to the messages state immediately
+            setMessages((prevMessages) => [
+                ...prevMessages,
+                {
+                    message: data.message,
+                    sender_id: auth.user.id,
+                    receiver_id: user.id
+                }
+            ]);
+
+            // Send the message to the server
             post(route("chat.store", user.id), {
                 onSuccess: () => {
-                    reset("message");
+                    reset("message"); // Clear the input field
                 }
             });
         }
@@ -34,7 +62,7 @@ export default function Chat({ user, auth, msg }) {
             <div className="flex flex-col h-[calc(100vh-140px)] p-4">
                 {/* Messages Area */}
                 <div className="flex-grow overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 rounded-md shadow mb-4">
-                    {msg.map((message, index) => (
+                    {messages.map((message, index) => (
                         <div
                             key={index}
                             className={`flex ${
