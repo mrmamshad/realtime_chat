@@ -1,8 +1,6 @@
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout";
 import { Head, useForm } from "@inertiajs/react";
-import { useState, useEffect } from "react";
-// Import echo.js to initialize Echo instance
-import Echo from "laravel-echo";
+import { useState, useEffect, useRef } from "react";
 
 export default function Chat({ user, auth, msg }) {
     const { data, setData, post, reset } = useForm({
@@ -12,19 +10,40 @@ export default function Chat({ user, auth, msg }) {
     });
 
     const [messages, setMessages] = useState(msg);
-    
+    const [isTyping, setIsTyping] = useState(false);
+    const [isFriendTyping, setIsFriendTyping] = useState(false);
+    const typingTimeout = useRef(null);
+
     useEffect(() => {
         // Listen for new messages on the private channel
         const channel = window.Echo.private(`chat-channel.${auth.user.id}`)
             .listen('MessageSentEvent', (event) => {
                 setMessages((prevMessages) => [...prevMessages, event.message]);
+            })
+            .listenForWhisper('typing', () => {
+                setIsFriendTyping(true);
+
+                // Reset typing indicator after a short delay
+                if (typingTimeout.current) clearTimeout(typingTimeout.current);
+                typingTimeout.current = setTimeout(() => {
+                    setIsFriendTyping(false);
+                }, 1000);
             });
 
         // Cleanup on unmount
         return () => {
-            channel.stopListening('MessageSentEvent');
+            channel.stopListening('MessageSentEvent')
+                   .stopListeningForWhisper('typing');
         };
     }, [auth.user.id]);
+
+    useEffect(() => {
+        // Scroll to the bottom of the messages area
+        const messagesArea = document.querySelector(".messages-area");
+        if (messagesArea) {
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+    }, [messages]);
 
     const handleSendMessage = (e) => {
         e.preventDefault();
@@ -49,6 +68,20 @@ export default function Chat({ user, auth, msg }) {
         }
     };
 
+    const sendTypingEvent = () => {
+        if (!isTyping) {
+            setIsTyping(true);
+            window.Echo.private(`chat-channel.${user.id}`).whisper('typing', {});
+        }
+
+        if (typingTimeout.current) clearTimeout(typingTimeout.current);
+
+        // Reset typing status after 1 second of inactivity
+        typingTimeout.current = setTimeout(() => {
+            setIsTyping(false);
+        }, 2000);
+    };
+
     return (
         <AuthenticatedLayout
             header={
@@ -61,7 +94,7 @@ export default function Chat({ user, auth, msg }) {
 
             <div className="flex flex-col h-[calc(100vh-140px)] p-4">
                 {/* Messages Area */}
-                <div className="flex-grow overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 rounded-md shadow mb-4">
+                <div className="messages-area flex-grow overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 rounded-md shadow mb-4">
                     {messages.map((message, index) => (
                         <div
                             key={index}
@@ -80,6 +113,11 @@ export default function Chat({ user, auth, msg }) {
                             </div>
                         </div>
                     ))}
+                    {isFriendTyping && (
+                        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                            {user.name} is typing...
+                        </p>
+                    )}
                 </div>
 
                 {/* Input Area */}
@@ -87,6 +125,7 @@ export default function Chat({ user, auth, msg }) {
                     <input
                         type="text"
                         value={data.message}
+                        onKeyDown={sendTypingEvent}
                         onChange={(e) => setData("message", e.target.value)}
                         placeholder="Type a message..."
                         className="flex-grow px-4 py-2 mr-2 border rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white"
